@@ -1,5 +1,6 @@
 import torch
 import torch.nn as nn
+import torch.nn.functional as F 
 
 from ..utils import get_activation, get_device
 
@@ -42,7 +43,7 @@ class TopicModel(nn.Module):
         self.rho = embeddings.clone().float().to(self.device)
 
         # Model
-        self.alphas = nn.Linear(num_genes, num_topics, bias=False)
+        self.alpha = nn.Linear(embedding_size, num_topics, bias=False)  # topic embedding
         self.q = nn.Sequential(
             nn.Linear(num_genes, gene_size),
             self.act,
@@ -82,3 +83,40 @@ class TopicModel(nn.Module):
         kl = -0.5 * torch.sum(1 + logsigma - mu.pow(2) - logsigma.exp(), dim=-1).mean()
         return mu, logsigma, kl
 
+    def get_beta(self):
+        logit = self.alpha(self.rho)  # num_genes x embedding_size -> num_genes x num_topics
+        beta = F.softmax(logit, dim=0).transpose(1, 0)
+        return beta
+
+    def get_theta(self, gene_counts):
+        """
+        Get the topic poportion for the document passed in the normalixe bow or TF-IDF.
+        """
+        mu_theta, logsigma_theta, kld_theta = self.encode(gene_counts)
+        z = self.reparameterize(mu_theta, logsigma_theta)
+        theta = F.softmax(z, dim=-1)
+        return theta, kld_theta
+
+    def decode(self, theta, beta):
+        """
+        Compute the probability of topic given the read counts matrix.
+        """
+        res = torch.mm(theta, beta)
+        almost_zeros = torch.full_like(res, 1e-6)
+        results_without_zeros = res.add(almost_zeros)
+        prob = torch.log(results_without_zeros)
+        return prob
+
+    def forward(self, gene_counts, theta=None, aggregate=True):
+        if theta is None:
+            theta, kld_theta = self.get_theta(gene_counts)
+        else:
+            kld_theta = None
+
+        beta = self.get_beta()
+
+        preds = self.decode(theta, beta)
+        recon_loss = - (preds * gene_counts).sum(1)
+        if aggregate:
+            recon_loss = recon_loss.mean()
+        return recon_loss, kld_theta
