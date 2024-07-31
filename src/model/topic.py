@@ -60,7 +60,8 @@ class TopicModel(nn.Module):
         if self.training:
             std = torch.exp(0.5 * logvar) 
             eps = torch.randn_like(std)
-            return eps.mul_(std).add_(mu)
+            delta = eps.mul_(std).add_(mu)
+            return delta
         else:
             return mu
 
@@ -92,10 +93,10 @@ class TopicModel(nn.Module):
         """
         Get the topic poportion for the document passed in the normalixe bow or TF-IDF.
         """
-        mu_theta, logsigma_theta, kld_theta = self.encode(gene_counts)
-        z = self.reparameterize(mu_theta, logsigma_theta)
-        theta = F.softmax(z, dim=-1)
-        return theta, kld_theta
+        mu_theta, logsigma_theta, kl_theta = self.encode(gene_counts)
+        delta = self.reparameterize(mu_theta, logsigma_theta)
+        theta = F.softmax(delta, dim=-1)
+        return theta, kl_theta
 
     def decode(self, theta, beta):
         """
@@ -107,16 +108,12 @@ class TopicModel(nn.Module):
         prob = torch.log(results_without_zeros)
         return prob
 
-    def forward(self, gene_counts, theta=None, aggregate=True):
-        if theta is None:
-            theta, kld_theta = self.get_theta(gene_counts)
-        else:
-            kld_theta = None
-
+    def forward(self, gene_counts, aggregate=True):
+        theta, kl_theta = self.get_theta(gene_counts)
         beta = self.get_beta()
 
         preds = self.decode(theta, beta)
         recon_loss = - (preds * gene_counts).sum(1)
         if aggregate:
             recon_loss = recon_loss.mean()
-        return recon_loss, kld_theta
+        return recon_loss, kl_theta
