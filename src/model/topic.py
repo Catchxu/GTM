@@ -1,16 +1,15 @@
-import anndata as ad
 import torch
 import torch.nn as nn
-import torch.nn.functional as F 
+import torch.nn.functional as F
 from torch.utils.data import DataLoader
+from tqdm import tqdm
 
 from ..utils import get_activation, get_device
+from ..configs import TMConfigs
 
 
 class TopicModel(nn.Module):
-    def __init__(self, embeddings: torch.Tensor, num_topics: int,
-                 gene_size: int, act: str = 'relu', enc_drop: float = 0.5, 
-                 device: str = 'cuda:0'):
+    def __init__(self, embeddings: torch.Tensor, num_topics: int, args: TMConfigs):
         """
         Topic Model in Gene Embedding Space.
 
@@ -20,14 +19,8 @@ class TopicModel(nn.Module):
             Pretrained gene embeddings with shape `num_genes` x `embedding_size`.
         num_topics: int
             Number of topics.
-        gene_size: int
-            Dimension of represented gene counts.
-        act: str
-            Activity function used in neural networks.
-        enc_drop: float
-            Dropout rate used in neural networks.
-        device: str
-            Device for training model.
+        args: 
+            Model arguments.
         """
         super().__init__()
 
@@ -35,25 +28,31 @@ class TopicModel(nn.Module):
         self.num_genes = num_genes
         self.embedding_size = embedding_size
         self.num_topics = num_topics
-        self.gene_size = gene_size
+        self.gene_size = args.gene_size
 
-        self.act = get_activation(act)
-        self.enc_drop = enc_drop
-        self.dropout = nn.Dropout(enc_drop)
-        self.device = get_device(device)
+        self.act = get_activation(args.act)
+        self.enc_drop = args.enc_drop
+        self.dropout = nn.Dropout(args.enc_drop)
+        self.device = get_device(args.device)
 
         self.rho = embeddings.clone().float().to(self.device)
 
         # Model
         self.alpha = nn.Linear(embedding_size, num_topics, bias=False)  # topic embedding
         self.q = nn.Sequential(
-            nn.Linear(num_genes, gene_size),
+            nn.Linear(num_genes, args.gene_size),
             self.act,
-            nn.Linear(gene_size, gene_size),
-            self.act,          
-        )
-        self.mu = nn.Linear(gene_size, num_topics, bias=True)
-        self.logsigma = nn.Linear(gene_size, num_topics, bias=True)
+            nn.Linear(args.gene_size, args.gene_size),
+            self.act,
+            )
+        self.mu = nn.Linear(args.gene_size, num_topics, bias=True)
+        self.logsigma = nn.Linear(args.gene_size, num_topics, bias=True)
+
+        self.optim = torch.optim.Adam(
+            self.parameters(), lr=args.learning_rate, weight_decay=args.weight_decay
+            )
+        self.clip = args.clip
+        self.verbose = args.verbose
 
     def reparameterize(self, mu, logvar):
         """
@@ -74,7 +73,7 @@ class TopicModel(nn.Module):
         Parameters
         ----------
         gene_counts: torch.Tensor
-                     The read counts matrix with shape `batch_size` x `num_genes`.
+            The read counts with shape `batch_size` x `num_genes`.
         """
         q = self.q(gene_counts)  # batch_size x num_genes -> batch_size x gene_size
 
@@ -93,7 +92,7 @@ class TopicModel(nn.Module):
 
     def get_theta(self, gene_counts):
         """
-        Get the topic poportion for the document passed in the normalixe bow or TF-IDF.
+        Get the topic poportion for the dataset.
         """
         mu_theta, logsigma_theta, kl_theta = self.encode(gene_counts)
         delta = self.reparameterize(mu_theta, logsigma_theta)
@@ -102,7 +101,7 @@ class TopicModel(nn.Module):
 
     def decode(self, theta, beta):
         """
-        Compute the probability of topic given the read counts matrix.
+        Compute the probability of topic given the read counts.
         """
         res = torch.mm(theta, beta)
         almost_zeros = torch.full_like(res, 1e-6)
@@ -120,14 +119,40 @@ class TopicModel(nn.Module):
             recon_loss = recon_loss.mean()
         return recon_loss, kl_theta
     
-    def train_one_epoch(self, adata: ad.AnnData, args):
+    def train_one_batch(self, batch):
+        batch = batch.to(self.device)
+
+        self.optim.zero_grad()
+        self.zero_grad()
+
+        recon_loss, kl_theta = self.forward(batch)
+        loss = recon_loss + kl_theta
+        loss.backward()
+        if self.clip > 0:
+            torch.nn.utils.clip_grad_norm_(self.parameters(), self.clip)
+        self.optim.step()
+        return loss
+
+    def train_one_epoch(self, epoch: int, loader: DataLoader):
+        """
+        Train topic model on one epoch.
+
+        Parameters
+        ----------
+        epoch: int
+            Training epoch ID.
+        loader: torch.DataLoader
+            Training dataset.
+        """
         self.train()
 
-        bs = args.batch_size
-        lr = args.learning_rate
-        decay = args.weight_decay
-
-        data = torch.Tensor(adata.X)
-        loader = DataLoader(data, batch_size=bs, shuffle=True, num_workers=0, drop_last=False)
-
-        optim = torch.optim.Adam(self.parameters(), lr=lr, weight_decay=decay)
+        if self.verbose:
+            with tqdm(total=len(loader)) as t:
+                t.set_description(f'Training Epochs {epoch}')
+                for _, batch in enumerate(loader):
+                    loss = self.train_one_batch(batch)
+                    t.set_postfix(Loss=loss.item())
+                    t.update(1)
+        else:
+            for _, batch in enumerate(loader):
+                _ = self.train_one_batch(batch)
