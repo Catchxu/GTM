@@ -1,6 +1,8 @@
+import anndata as ad
 import torch
 import torch.nn as nn
 import torch.nn.functional as F 
+from torch.utils.data import DataLoader
 
 from ..utils import get_activation, get_device
 
@@ -117,3 +119,15 @@ class TopicModel(nn.Module):
         if aggregate:
             recon_loss = recon_loss.mean()
         return recon_loss, kl_theta
+    
+    def train_one_epoch(self, adata: ad.AnnData, args):
+        self.train()
+
+        bs = args.batch_size
+        lr = args.learning_rate
+        decay = args.weight_decay
+
+        data = torch.Tensor(adata.X)
+        loader = DataLoader(data, batch_size=bs, shuffle=True, num_workers=0, drop_last=False)
+
+        optim = torch.optim.Adam(self.parameters(), lr=lr, weight_decay=decay)
