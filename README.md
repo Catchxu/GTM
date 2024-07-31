@@ -1,1 +1,1 @@
-# GLM
+# Topic Model in Gene Embedding Space
