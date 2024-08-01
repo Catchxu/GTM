@@ -1,3 +1,4 @@
+import anndata as ad
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -48,6 +49,7 @@ class TopicModel(nn.Module):
         self.mu = nn.Linear(args.gene_size, num_topics, bias=True)
         self.logsigma = nn.Linear(args.gene_size, num_topics, bias=True)
 
+        self.batch_size = args.batch_size
         self.optim = torch.optim.Adam(
             self.parameters(), lr=args.learning_rate, weight_decay=args.weight_decay
             )
@@ -133,18 +135,21 @@ class TopicModel(nn.Module):
         self.optim.step()
         return loss
 
-    def train_one_epoch(self, epoch: int, loader: DataLoader):
+    def train_one_epoch(self, epoch: int, adata: ad.AnnData):
         """
-        Train topic model on one epoch.
+        Train topic model with one epoch.
 
         Parameters
         ----------
         epoch: int
             Training epoch ID.
-        loader: torch.DataLoader
-            Training dataset.
+        adata: AnnData
+            Training anndata.
         """
         self.train()
+
+        dataset = torch.Tensor(adata.X)
+        loader = DataLoader(dataset, self.batch_size, shuffle=True)
 
         if self.verbose:
             with tqdm(total=len(loader)) as t:
