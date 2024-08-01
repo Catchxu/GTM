@@ -4,6 +4,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch.utils.data import DataLoader
 from tqdm import tqdm
+from typing import List
 
 from ..utils import get_activation, get_device
 from ..configs import TMConfigs
@@ -107,16 +108,15 @@ class TopicModel(nn.Module):
         """
         res = torch.mm(theta, beta)
         almost_zeros = torch.full_like(res, 1e-6)
-        results_without_zeros = res.add(almost_zeros)
-        prob = torch.log(results_without_zeros)
+        prob = res.add(almost_zeros)
         return prob
 
     def forward(self, gene_counts, aggregate=True):
         theta, kl_theta = self.get_theta(gene_counts)
         beta = self.get_beta()
 
-        preds = self.decode(theta, beta)
-        recon_loss = - (preds * gene_counts).sum(1)
+        logp = torch.log(self.decode(theta, beta))
+        recon_loss = - (logp * gene_counts).sum(1)
         if aggregate:
             recon_loss = recon_loss.mean()
         return recon_loss, kl_theta
@@ -144,7 +144,7 @@ class TopicModel(nn.Module):
         epoch: int
             Training epoch ID.
         adata: AnnData
-            Training anndata.
+            Training dataset.
         """
         self.train()
 
@@ -161,3 +161,23 @@ class TopicModel(nn.Module):
         else:
             for _, batch in enumerate(loader):
                 _ = self.train_one_batch(batch)
+
+    @torch.no_grad()
+    def retrieve(self, gene_id: List[int], adata: ad.AnnData):
+        """
+        Retrieve the mapping score between given gene list and specific dataset.
+
+        Parameters
+        ----------
+        gene_id: List[int]
+            Given gene list filled with ID.
+        adata: AnnData
+            Target dataset.        
+        """
+        self.eval()
+        dataset = torch.Tensor(adata.X).to(self.device)
+        theta, _ = self.get_theta(dataset)
+        beta = self.get_beta()
+        pred = self.decode(theta, beta)
+        score = pred[:, gene_id].mean()
+        return float(score.cpu())
