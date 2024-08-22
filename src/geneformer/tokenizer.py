@@ -98,6 +98,9 @@ def sum_ensembl_ids(data_directory,
                 dedup_filename = data_directory.with_name(data_directory.stem + "__dedup.loom")
                 data.ra["gene_ids_collapsed"] = gene_ids_collapsed
                 dup_genes = [idx for idx, count in Counter(data.ra["gene_ids_collapsed"]).items() if count > 1]
+                if len(dup_genes) == 0:
+                    return data
+
                 num_chunks = int(np.ceil(data.shape[1] / chunk_size))
                 first_chunk = True
                 for _, _, view in tqdm(data.scan(axis = 1, batch_size = chunk_size), total = num_chunks):
@@ -162,6 +165,8 @@ def sum_ensembl_ids(data_directory,
             data.var_names = gene_ids_collapsed
             data = data[:, ~data.var.index.isna()]
             dup_genes = [idx for idx, count in Counter(data.var_names).items() if count > 1]
+            if len(dup_genes) == 0:
+                return data
 
             num_chunks = int(np.ceil(data.shape[0] / chunk_size))
 
