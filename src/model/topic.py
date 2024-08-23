@@ -7,11 +7,11 @@ from tqdm import tqdm
 from typing import List
 
 from ..utils import get_activation, get_device
-from ..configs import TMConfigs
+from ..configs import TopicConfigs
 
 
 class TopicModel(nn.Module):
-    def __init__(self, embeddings: torch.Tensor, num_topics: int, args: TMConfigs):
+    def __init__(self, embeddings: torch.Tensor, num_topics: int, args: TopicConfigs):
         """
         Topic Model in Gene Embedding Space.
 
