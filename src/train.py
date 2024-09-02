@@ -20,7 +20,7 @@ if __name__ == '__main__':
     common_genes = gene_embeddings_genes.intersection(gene_data_genes)
     gene_counts_common = adata[:, common_genes]
     gene_embeddings_common = gene_embeddings.loc[common_genes].to_numpy()
-    gene_embeddings = torch.tensor(gene_embeddings_common, dtype=torch.float64).to(device)
+    gene_embeddings = torch.tensor(gene_embeddings_common, dtype=torch.float32).to(device)
 
     #train topic_model
     model = TopicModel(embeddings=gene_embeddings, num_topics=50, args=args)
@@ -29,7 +29,7 @@ if __name__ == '__main__':
         model.train_one_epoch(epoch, gene_counts_common)
 
     # save model
-    torch.save(model.state_dict(), '../saved_model/GTM.pth')
+    torch.save(model.state_dict(), '../save_model/GTM.pth')
 
     beta = model.get_beta().to(device)
 

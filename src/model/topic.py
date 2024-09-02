@@ -151,9 +151,10 @@ class TopicModel(nn.Module):
         self.train()
 
         if issparse(adata.X):
-            adata.X = adata.X.toarray()
+            dataset = torch.Tensor(adata.X.toarray())
+        else:
+            dataset = torch.Tensor(adata.X)
 
-        dataset = torch.Tensor(adata.X)
         loader = DataLoader(dataset, self.batch_size, shuffle=True)
 
         if self.verbose:
