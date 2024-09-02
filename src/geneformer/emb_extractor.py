@@ -558,7 +558,7 @@ class EmbExtractor:
         input_data_file : Path
             | Path to directory containing .dataset inputs
         output_directory : Path
-            | Path to directory where embedding data will be saved as csv
+            | Path to directory where embedding data will be saved as pkl
         output_prefix : str
             | Prefix for output file
         output_torch_embs : bool
@@ -617,8 +617,10 @@ class EmbExtractor:
 
         # save embeddings to output_path
         if cell_state is None:
-            output_path = (Path(output_directory) / output_prefix).with_suffix(".csv")
-            embs_df.to_csv(output_path)
+            output_path = (Path(output_directory) / output_prefix).with_suffix(".pkl")
+            # embs_df.to_csv(output_path)
+            with open(output_path, 'wb') as f:
+                pickle.dump(embs_df, f)
 
         if self.exact_summary_stat == "exact_mean":
             embs = embs.mean(dim=0)
@@ -672,7 +674,7 @@ class EmbExtractor:
         input_data_file : Path
             | Path to directory containing .dataset inputs
         output_directory : Path
-            | Path to directory where embedding data will be saved as csv
+            | Path to directory where embedding data will be saved as pkl
         output_prefix : str
             | Prefix for output file
         output_torch_embs : bool
@@ -728,8 +730,8 @@ class EmbExtractor:
                     )
 
         output_path = (Path(output_directory) / output_prefix).with_suffix(".pkl")
-        with open(output_path, "wb") as fp:
-            pickle.dump(state_embs_dict, fp)
+        with open(output_path, "wb") as f:
+            pickle.dump(state_embs_dict, f)
 
         return state_embs_dict
 

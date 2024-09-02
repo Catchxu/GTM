@@ -1,4 +1,5 @@
 import anndata as ad
+import scanpy as sc
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -150,6 +151,8 @@ class TopicModel(nn.Module):
         """
         self.train()
 
+        sc.pp.normalize_total(adata, target_sum=1)
+        
         if issparse(adata.X):
             dataset = torch.Tensor(adata.X.toarray())
         else:
