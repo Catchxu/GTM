@@ -5,9 +5,10 @@ import torch.nn.functional as F
 from torch.utils.data import DataLoader
 from tqdm import tqdm
 from typing import List
+from scipy.sparse import issparse
 
-from ..utils import get_activation, get_device
-from ..configs import TopicConfigs
+from utils import get_activation, get_device
+from configs import TopicConfigs
 
 
 class TopicModel(nn.Module):
@@ -40,15 +41,15 @@ class TopicModel(nn.Module):
         self.rho = embeddings.clone().float().to(self.device)
 
         # Model
-        self.alpha = nn.Linear(embedding_size, num_topics, bias=False)  # topic embedding
+        self.alpha = nn.Linear(embedding_size, num_topics, bias=False).to(self.device) # topic embedding
         self.q = nn.Sequential(
             nn.Linear(num_genes, args.gene_size),
             self.act,
             nn.Linear(args.gene_size, args.gene_size),
             self.act,
-            )
-        self.mu = nn.Linear(args.gene_size, num_topics, bias=True)
-        self.logsigma = nn.Linear(args.gene_size, num_topics, bias=True)
+            ).to(self.device)
+        self.mu = nn.Linear(args.gene_size, num_topics, bias=True).to(self.device)
+        self.logsigma = nn.Linear(args.gene_size, num_topics, bias=True).to(self.device)
 
         self.batch_size = args.batch_size
         self.optim = torch.optim.Adam(
@@ -78,6 +79,7 @@ class TopicModel(nn.Module):
         gene_counts: torch.Tensor
             The read counts with shape `batch_size` x `num_genes`.
         """
+        gene_counts = gene_counts.to(self.device)
         q = self.q(gene_counts)  # batch_size x num_genes -> batch_size x gene_size
 
         if self.enc_drop > 0:
@@ -90,7 +92,7 @@ class TopicModel(nn.Module):
 
     def get_beta(self):
         logit = self.alpha(self.rho)  # num_genes x embedding_size -> num_genes x num_topics
-        beta = F.softmax(logit, dim=0).transpose(1, 0)
+        beta = F.softmax(logit, dim=0).transpose(1, 0).to(self.device)
         return beta
 
     def get_theta(self, gene_counts):
@@ -147,6 +149,9 @@ class TopicModel(nn.Module):
             Training dataset.
         """
         self.train()
+
+        if issparse(adata.X):
+            adata.X = adata.X.toarray()
 
         dataset = torch.Tensor(adata.X)
         loader = DataLoader(dataset, self.batch_size, shuffle=True)
