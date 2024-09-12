@@ -1,11 +1,12 @@
 import anndata as ad
+import scanpy as sc
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-import sys
 from torch.utils.data import DataLoader
 from tqdm import tqdm
 from typing import List
+from scipy.sparse import issparse
 
 from utils import get_activation, get_device
 from configs import TopicConfigs
@@ -150,7 +151,13 @@ class TopicModel(nn.Module):
         """
         self.train()
 
-        dataset = torch.Tensor(adata.X)
+        sc.pp.normalize_total(adata, target_sum=1)
+        
+        if issparse(adata.X):
+            dataset = torch.Tensor(adata.X.toarray())
+        else:
+            dataset = torch.Tensor(adata.X)
+
         loader = DataLoader(dataset, self.batch_size, shuffle=True)
 
         if self.verbose:
