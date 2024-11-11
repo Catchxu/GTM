@@ -170,23 +170,3 @@ class TopicModel(nn.Module):
         else:
             for _, batch in enumerate(loader):
                 _ = self.train_one_batch(batch)
-
-    @torch.no_grad()
-    def retrieve(self, gene_id: List[int], adata: ad.AnnData):
-        """
-        Retrieve the mapping score between given gene list and specific dataset.
-
-        Parameters
-        ----------
-        gene_id: List[int]
-            Given gene list filled with ID.
-        adata: AnnData
-            Target dataset.        
-        """
-        self.eval()
-        dataset = torch.Tensor(adata.X).to(self.device)
-        theta, _ = self.get_theta(dataset)
-        beta = self.get_beta()
-        pred = self.decode(theta, beta)
-        score = pred[:, gene_id].mean()
-        return float(score.cpu())
