@@ -13,6 +13,7 @@ class GeneformerConfigs:
 class TopicConfigs:
     def __init__(self):
         self.device = 'cuda'
+        self.num_epochs = 10
         self.batch_size = 32
         self.learning_rate = 5e-4
         self.weight_decay = 1e-6
@@ -20,9 +21,10 @@ class TopicConfigs:
         self.verbose = 1
 
         self.Q_hidden_dim = [1024, 512, 256]
-        self.Q_dropout = 0.3
+        self.Q_dropout = 0.5
 
         self.num_topics = 20
+        self.update_vocabulary = True
         self.topk = 4
         self.noisy_gating = True
         self.GEGLU_mult_bias = True

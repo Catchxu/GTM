@@ -37,6 +37,16 @@ class QEncoder(nn.Module):
         self.mu = nn.Linear(dim_2, args.num_topics)
         self.logsigma = nn.Linear(dim_2, args.num_topics)
 
+        self.apply(self.init_)
+
+    def init_(self, module):
+        if isinstance(module, nn.Linear):
+            dim = module.weight.shape[0]
+            std = dim ** -0.5
+
+            module.weight.data.uniform_(-std, std)
+            module.bias.data.uniform_(-std, std)
+
     def forward(self, gene_counts: torch.Tensor):
         """
         Get paramters of the variational distribution.
@@ -76,9 +86,13 @@ class TopicModel(nn.Module):
 
         # model
         self.device = get_device(args.device)
-        self.vocabulary = vocabulary.clone().float().to(self.device)
         self.encoder = QEncoder(num_genes, args).to(self.device)
         self.moe = MixtureOfExperts(gene_dim, args).to(self.device)
+
+        if args.update_vocabulary:
+            self.vocabulary = nn.Parameter(vocabulary.clone().float()).to(self.device)
+        else:
+            self.vocabulary = vocabulary.clone().float().to(self.device)
 
         # training
         self.batch_size = args.batch_size
