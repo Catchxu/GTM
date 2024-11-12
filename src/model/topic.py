@@ -5,53 +5,82 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch.utils.data import DataLoader
 from tqdm import tqdm
-from typing import List
 from scipy.sparse import issparse
 
-from utils import get_activation, get_device
+from utils import get_device
 from configs import TopicConfigs
+from .moe import MixtureOfExperts
+
+
+class QEncoder(nn.Module):
+    def __init__(self, num_genes: int, args: TopicConfigs):
+        super().__init__()
+
+        hidden_dim = args.Q_hidden_dim
+        dim_1 = num_genes
+
+        modules = []
+        for dim_2 in hidden_dim:
+            modules.append(
+                nn.Sequential(
+                    nn.Linear(dim_1, dim_2),
+                    nn.BatchNorm1d(dim_2),
+                    nn.LeakyReLU()
+                )    
+            )
+            dim_1 = dim_2
+        
+        if args.Q_dropout > 0:
+            modules.append(nn.Dropout(args.Q_dropout))
+        self.encoder = nn.Sequential(*modules)
+
+        self.mu = nn.Linear(dim_2, args.num_topics)
+        self.logsigma = nn.Linear(dim_2, args.num_topics)
+
+    def forward(self, gene_counts: torch.Tensor):
+        """
+        Get paramters of the variational distribution.
+
+        Parameters
+        ----------
+        gene_counts: torch.Tensor
+            Read counts with shape `batch_size x num_genes`.
+        """
+        gene_counts = gene_counts
+        q = self.encoder(gene_counts)
+
+        mu = self.mu(q)  # batch_size x num_topics
+        logsigma = self.logsigma(q)
+        kl = -0.5 * torch.sum(1 + logsigma - mu.pow(2) - logsigma.exp(), dim=-1).mean()
+        return mu, logsigma, kl
 
 
 class TopicModel(nn.Module):
-    def __init__(self, embeddings: torch.Tensor, num_topics: int, args: TopicConfigs):
+    def __init__(self, vocabulary: torch.Tensor, args: TopicConfigs):
         """
         Topic Model in Gene Embedding Space.
 
         Parameters
         ----------
-        embeddings: torch.Tensor
-            Pretrained gene embeddings with shape `num_genes` x `embedding_size`.
-        num_topics: int
-            Number of topics.
+        vocabulary: torch.Tensor
+            Pretrained gene vocabulary embeddings with shape `num_genes x gene_dim`.
         args: 
             Model arguments.
         """
         super().__init__()
 
-        num_genes, embedding_size = embeddings.size()
+        num_genes, gene_dim = vocabulary.size()
         self.num_genes = num_genes
-        self.embedding_size = embedding_size
-        self.num_topics = num_topics
-        self.gene_size = args.gene_size
+        self.gene_dim = gene_dim
+        self.num_topics = args.num_topics
 
-        self.act = get_activation(args.act)
-        self.enc_drop = args.enc_drop
-        self.dropout = nn.Dropout(args.enc_drop)
+        # model
         self.device = get_device(args.device)
+        self.vocabulary = vocabulary.clone().float().to(self.device)
+        self.encoder = QEncoder(num_genes, args).to(self.device)
+        self.moe = MixtureOfExperts(gene_dim, args).to(self.device)
 
-        self.rho = embeddings.clone().float().to(self.device)
-
-        # Model
-        self.alpha = nn.Linear(embedding_size, num_topics, bias=False).to(self.device) # topic embedding
-        self.q = nn.Sequential(
-            nn.Linear(num_genes, args.gene_size),
-            self.act,
-            nn.Linear(args.gene_size, args.gene_size),
-            self.act,
-            ).to(self.device)
-        self.mu = nn.Linear(args.gene_size, num_topics, bias=True).to(self.device)
-        self.logsigma = nn.Linear(args.gene_size, num_topics, bias=True).to(self.device)
-
+        # training
         self.batch_size = args.batch_size
         self.optim = torch.optim.Adam(
             self.parameters(), lr=args.learning_rate, weight_decay=args.weight_decay
@@ -71,36 +100,19 @@ class TopicModel(nn.Module):
         else:
             return mu
 
-    def encode(self, gene_counts: torch.Tensor):
+    def call_beta(self):
         """
-        Get paramters of the variational distribution.
-
-        Parameters
-        ----------
-        gene_counts: torch.Tensor
-            The read counts with shape `batch_size` x `num_genes`.
+        Get the topic distribution (`beta`) for the genes.
         """
-        gene_counts = gene_counts.to(self.device)
-        q = self.q(gene_counts)  # batch_size x num_genes -> batch_size x gene_size
-
-        if self.enc_drop > 0:
-            q = self.dropout(q)
-
-        mu = self.mu(q)  # batch_size x gene_size -> batch_size x num_topics
-        logsigma = self.logsigma(q)
-        kl = -0.5 * torch.sum(1 + logsigma - mu.pow(2) - logsigma.exp(), dim=-1).mean()
-        return mu, logsigma, kl
-
-    def get_beta(self):
-        logit = self.alpha(self.rho)  # num_genes x embedding_size -> num_genes x num_topics
-        beta = F.softmax(logit, dim=0).transpose(1, 0).to(self.device)
+        _, scores, _ = self.moe(self.vocabulary)
+        beta = scores.transpose(1, 0)
         return beta
 
-    def get_theta(self, gene_counts):
+    def call_theta(self, gene_counts):
         """
-        Get the topic poportion for the dataset.
+        Get the topic poportion (`theta`) for the cells.
         """
-        mu_theta, logsigma_theta, kl_theta = self.encode(gene_counts)
+        mu_theta, logsigma_theta, kl_theta = self.encoder(gene_counts)
         delta = self.reparameterize(mu_theta, logsigma_theta)
         theta = F.softmax(delta, dim=-1)
         return theta, kl_theta
@@ -109,20 +121,20 @@ class TopicModel(nn.Module):
         """
         Compute the probability of topic given the read counts.
         """
-        res = torch.mm(theta, beta)
+        res = torch.mm(theta, beta)  # (BS, topics) x (topics, genes)
         almost_zeros = torch.full_like(res, 1e-6)
         prob = res.add(almost_zeros)
         return prob
 
     def forward(self, gene_counts, aggregate=True):
-        theta, kl_theta = self.get_theta(gene_counts)
-        beta = self.get_beta()
+        theta, kl_loss = self.call_theta(gene_counts)
+        beta = self.call_beta()
 
         logp = torch.log(self.decode(theta, beta))
         recon_loss = - (logp * gene_counts).sum(1)
         if aggregate:
             recon_loss = recon_loss.mean()
-        return recon_loss, kl_theta
+        return recon_loss, kl_loss
     
     def train_one_batch(self, batch):
         batch = batch.to(self.device)
@@ -138,6 +150,16 @@ class TopicModel(nn.Module):
         self.optim.step()
         return loss
 
+    def preprocess(self, adata: ad.AnnData):
+        sc.pp.normalize_total(adata, target_sum=1)
+        
+        if issparse(adata.X):
+            dataset = torch.Tensor(adata.X.toarray())
+        else:
+            dataset = torch.Tensor(adata.X)
+
+        return dataset    
+
     def train_one_epoch(self, epoch: int, adata: ad.AnnData):
         """
         Train topic model with one epoch.
@@ -150,14 +172,7 @@ class TopicModel(nn.Module):
             Training dataset.
         """
         self.train()
-
-        sc.pp.normalize_total(adata, target_sum=1)
-        
-        if issparse(adata.X):
-            dataset = torch.Tensor(adata.X.toarray())
-        else:
-            dataset = torch.Tensor(adata.X)
-
+        dataset = self.preprocess(adata)
         loader = DataLoader(dataset, self.batch_size, shuffle=True)
 
         if self.verbose:
@@ -170,3 +185,44 @@ class TopicModel(nn.Module):
         else:
             for _, batch in enumerate(loader):
                 _ = self.train_one_batch(batch)
+    
+    @torch.no_grad()
+    def call_C2T(self, adata: ad.AnnData):
+        """
+        Call the assignment matrix with shape `cells x topics`
+
+        Parameters
+        ----------
+        adata: AnnData
+            Query dataset.
+        """
+        dataset = self.preprocess(adata)
+        loader = DataLoader(dataset, self.batch_size*5, shuffle=False)
+
+        cells_topics = []
+        for _, batch in enumerate(loader):
+            batch = batch.to(self.device)
+            theta, _ = self.call_theta(batch)
+            cells_topics.append(theta)
+        
+        return torch.stack(cells_topics).detach().cpu().numpy()
+
+
+    @torch.no_grad()
+    def call_G2T(self, gene_sets):
+        """
+        Call the assignment matrix with shape `genes x topics`
+
+        Parameters
+        ----------
+        gene_sets: torch.Tensor
+            Query genes with shape `num_genes x gene_dim`.
+        """
+
+        gene_sets = gene_sets.to(self.device)
+        _, scores, _ = self.moe(gene_sets)
+        
+        return scores.detach().cpu().numpy()
+        
+
+

@@ -12,33 +12,41 @@ if __name__ == '__main__':
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
     # load data
-    with open('../data/gene.pkl', 'rb') as f:
+    with open('./data/gene.pkl', 'rb') as f:
         gene_embeddings = pickle.load(f)
 
-    adata = sc.read_h5ad('../data/PBMC.h5ad')
+    adata = sc.read_h5ad('./data/PBMC.h5ad')
     gene_embeddings_genes = gene_embeddings.index
     gene_data_genes = adata.var_names
 
     common_genes = gene_embeddings_genes.intersection(gene_data_genes)
-    gene_counts_common = adata[:, common_genes]
+    adata_common = adata[:, common_genes]
     gene_embeddings_common = gene_embeddings.loc[common_genes].to_numpy()
-    gene_embeddings = torch.tensor(gene_embeddings_common, dtype=torch.float32).to(device)
+    vocabulary = torch.tensor(gene_embeddings_common, dtype=torch.float32).to(device)
 
-    #train topic_model
-    model = TopicModel(embeddings=gene_embeddings, num_topics=200, args=args)
-    num_epochs = 10
+    # train topic_model
+    model = TopicModel(vocabulary, args=args)
+    num_epochs = 0
     for epoch in range(num_epochs):
-        model.train_one_epoch(epoch, gene_counts_common)
+        model.train_one_epoch(epoch, adata_common)
 
     # save model
-    torch.save(model.state_dict(), '../save_model/GTM.pth')
+    torch.save(model.state_dict(), './save_model/GTM.pth')
 
-    beta = model.get_beta().to(device)
+    # query topic proportions for each cell
+    C2T = model.call_C2T(adata_common)
+    # adata_common.obsm['topic_proportion'] = C2T
+    
+    num_topics = C2T.shape[1]
+    topic_df = pd.DataFrame(C2T, columns=[f"Topic_{i+1}" for i in range(num_topics)])
+    adata_topics = sc.AnnData(X=topic_df.values)
+    adata_topics.obs = adata_common.obs.copy()
 
-    # conut topic embedding
-    topic_embeddings = torch.matmul(beta.to(device), gene_embeddings.to(device))
-
-    # save topic embedding
-    # torch.save(topic_embeddings, )
-    with open('../data/topic.pkl', 'wb') as f:
-        pickle.dump(topic_embeddings, f)
+    sc.pl.heatmap(
+        adata_topics,
+        var_names=adata_topics.var_names,
+        groupby='cell_type',
+        cmap='RdBu',
+        standard_scale='var',
+        save='./result/PBMC_C2T_heatmap.png'
+    )

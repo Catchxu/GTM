@@ -1,6 +1,9 @@
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 from torch.distributions.normal import Normal
+
+from configs import TopicConfigs
 
 
 class SparseRouter(object):
@@ -31,33 +34,68 @@ class SparseRouter(object):
         return combined
 
 
-class MLP(nn.Module):
-    def __init__(self, input_size, output_size, hidden_size):
+class RMSNorm(nn.Module):
+    def __init__(self, dim):
         super().__init__()
-        self.fc1 = nn.Linear(input_size, hidden_size)
-        self.fc2 = nn.Linear(hidden_size, output_size)
-        self.relu = nn.ReLU()
-        self.soft = nn.Softmax(1)
+        self.scale = dim ** 0.5
+        self.gamma = nn.Parameter(torch.ones(dim))
 
     def forward(self, x):
-        out = self.fc1(x)
-        out = self.relu(out)
-        out = self.fc2(out)
-        out = self.soft(out)
-        return out
+        return F.normalize(x, dim = -1) * self.gamma * self.scale
+
+
+class GEGLU(nn.Module):
+    def __init__(self, dim, mult_bias=True):
+        super().__init__()
+        self.mult_bias = nn.Parameter(torch.ones(dim)) if mult_bias else 1.
+
+    def forward(self, x):
+        x, gate = x.chunk(2, dim = -1)
+        return F.gelu(gate) * x * self.mult_bias
+
+
+class Expert(nn.Module):
+    def __init__(self, gene_dim, mult_bias=True, norm=True):
+        super().__init__()
+
+        self.net = nn.Sequential(
+            RMSNorm(gene_dim) if norm else nn.Identity(),
+            nn.Linear(gene_dim, gene_dim * 2),
+            GEGLU(gene_dim, mult_bias=mult_bias),
+            nn.Linear(gene_dim, gene_dim)
+        )
+
+        self.apply(self.init_)
+
+    def init_(self, module):
+        if isinstance(module, nn.Linear):
+            dim = module.weight.shape[0]
+            std = dim ** -0.5
+
+            module.weight.data.uniform_(-std, std)
+            module.bias.data.uniform_(-std, std)
+
+    def forward(self, x):
+        return self.net(x)
+
+
 
 
 class MixtureOfExperts(nn.Module):
-    def __init__(self, gene_dim, num_experts, noisy_gating=True):
+    def __init__(self, gene_dim, args: TopicConfigs):
+                 # num_experts, topk=2, noisy_gating=True):
         super().__init__()
-        self.noisy_gating = noisy_gating
-        self.num_experts = num_experts
+    
         self.gene_dim = gene_dim
-        self.k = k
+        self.num_experts = args.num_topics
+        self.k = args.topk
+        self.noisy_gating = args.noisy_gating
 
         # instantiate experts
+        self.bias = args.GEGLU_mult_bias
+        self.norm = args.RMSNorm
         self.experts = nn.ModuleList([
-            MLP(self.gene_dim, self.gene_dim, self.gene_dim) for _ in range(self.num_experts)
+            Expert(self.gene_dim, self.bias, self.norm) for _ in range(self.num_experts)
         ])
         self.w_gate = nn.Parameter(torch.zeros(gene_dim, num_experts), requires_grad=True)
         self.w_noise = nn.Parameter(torch.zeros(gene_dim, num_experts), requires_grad=True)
@@ -141,7 +179,7 @@ if __name__ == '__main__':
     k = 3
 
     model = MixtureOfExperts(gene_dim, num_experts, k)
-    x = torch.randn(32, gene_dim)
+    x = torch.randn(16, gene_dim)
 
     y, scores, loss = model(x)
-    print(scores.shape)
+    print(scores)
