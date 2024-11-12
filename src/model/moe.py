@@ -147,42 +147,22 @@ class MixtureOfExperts(nn.Module):
 
         # calculate topk + 1 that will be needed for the noisy gates
         logits = self.softmax(logits)
-        top_logits, top_indices = logits.topk(min(self.k + 1, self.num_experts), dim=1)
-        top_k_logits = top_logits[:, :self.k]
-        top_k_indices = top_indices[:, :self.k]
+        num_top_tokens = min(self.k + 1, self.num_experts) * logits.shape[0] / self.num_experts
+        top_logits, top_indices = logits.topk(int(num_top_tokens), dim=0)
+        top_k_logits = top_logits[:-1, :]
+        top_k_indices = top_indices[:-1, :]
         top_k_gates = top_k_logits / (top_k_logits.sum(1, keepdim=True) + 1e-6)  # normalization
 
         zeros = torch.zeros_like(logits, requires_grad=True)
-        gates = zeros.scatter(1, top_k_indices, top_k_gates)
+        gates = zeros.scatter(0, top_k_indices, top_k_gates)
 
-        if self.noisy_gating and self.k < self.num_experts and train:
-            load = (self._prob_in_top_k(clean_logits, noisy_logits, noise_stddev, top_logits)).sum(0)
-        else:
-            load = self._gates_to_load(gates)
-        return gates, load
+        return gates
 
-    def forward(self, x, loss_coef=1e-2):
-        scores, load = self.noisy_top_k_gating(x, self.training)
-        importance = scores.sum(0)
-
-        loss = self.coef_var_squared(importance) + self.coef_var_squared(load)
-        loss *= loss_coef
-
+    def forward(self, x):
+        scores = self.noisy_top_k_gating(x, self.training)
         router = SparseRouter(self.num_experts, scores)
         expert_inputs = router.route(x)
 
         expert_outputs = [self.experts[i](expert_inputs[i]) for i in range(self.num_experts)]
         y = router.combine(expert_outputs)
-        return y, scores, loss
-
-
-if __name__ == '__main__':
-    gene_dim = 768
-    num_experts = 10
-    k = 3
-
-    model = MixtureOfExperts(gene_dim, num_experts, k)
-    x = torch.randn(16, gene_dim)
-
-    y, scores, loss = model(x)
-    print(scores)
+        return y, scores

@@ -36,6 +36,10 @@ if __name__ == '__main__':
     # save model
     torch.save(model.state_dict(), './save_model/GTM.pth')
 
+
+    # visualization
+    import matplotlib.pyplot as plt
+
     # query topic proportions for each cell
     C2T = model.call_C2T(adata_common)
     num_topics = C2T.shape[1]
@@ -45,9 +49,20 @@ if __name__ == '__main__':
     adata_topics = sc.AnnData(X=avg_topic_df.values)
     adata_topics.obs['cell_type'] = avg_topic_df.index
 
+    sc.pl.heatmap(
+        adata_topics,
+        var_names=adata_topics.var_names,
+        groupby='cell_type',
+        cmap='RdBu_r',
+        standard_scale='var',
+        swap_axes=True,
+        show=False)
+    plt.savefig('./results/PBMC_C2T_heatmap_avg.png', 
+                dpi=300, bbox_inches='tight')
 
-    # visualization
-    import matplotlib.pyplot as plt
+    topic_df = pd.DataFrame(C2T, columns=[f"Topic_{i+1}" for i in range(num_topics)])
+    adata_topics = sc.AnnData(topic_df)
+    adata_topics.obs['cell_type'] = adata_common.obs['cell_type'].values
 
     sc.pl.heatmap(
         adata_topics,
@@ -55,8 +70,8 @@ if __name__ == '__main__':
         groupby='cell_type',
         cmap='RdBu_r',
         standard_scale='var',
+        swap_axes=True,
         show=False)
-
     plt.savefig('./results/PBMC_C2T_heatmap.png', 
                 dpi=300, bbox_inches='tight')
 
@@ -65,13 +80,15 @@ if __name__ == '__main__':
     num_topics = G2T.shape[1]
     topic_df = pd.DataFrame(G2T, columns=[f"Topic_{i+1}" for i in range(num_topics)])
     adata_topics = sc.AnnData(topic_df)
+    adata_topics.obs['dummy_group'] = 'gene'
 
     sc.pl.heatmap(
         adata_topics,
         var_names=adata_topics.var_names,
+        groupby='dummy_group',
         cmap='RdBu_r',
         standard_scale='var',
+        swap_axes=True,
         show=False)
-
     plt.savefig('./results/PBMC_G2T_heatmap.png', 
                 dpi=300, bbox_inches='tight')

@@ -104,7 +104,7 @@ class TopicModel(nn.Module):
         """
         Get the topic distribution (`beta`) for the genes.
         """
-        _, scores, _ = self.moe(self.vocabulary)
+        _, scores = self.moe(self.vocabulary)
         beta = scores.transpose(1, 0)
         return beta
 
@@ -151,8 +151,11 @@ class TopicModel(nn.Module):
         return loss
 
     def preprocess(self, adata: ad.AnnData):
+        if self.training:
+            sc.pp.filter_cells(adata, min_genes=100)
+
         sc.pp.normalize_total(adata, target_sum=1)
-        
+
         if issparse(adata.X):
             dataset = torch.Tensor(adata.X.toarray())
         else:
@@ -207,7 +210,6 @@ class TopicModel(nn.Module):
         
         return torch.cat(cells_topics).detach().cpu().numpy()
 
-
     @torch.no_grad()
     def call_G2T(self, gene_sets):
         """
@@ -220,7 +222,7 @@ class TopicModel(nn.Module):
         """
 
         gene_sets = gene_sets.to(self.device)
-        _, scores, _ = self.moe(gene_sets)
+        _, scores = self.moe(gene_sets)
         
         return scores.detach().cpu().numpy()
         
