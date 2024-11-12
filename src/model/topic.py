@@ -82,7 +82,7 @@ class TopicModel(nn.Module):
 
         # training
         self.batch_size = args.batch_size
-        self.optim = torch.optim.Adam(
+        self.optim = torch.optim.AdamW(
             self.parameters(), lr=args.learning_rate, weight_decay=args.weight_decay
             )
         self.clip = args.clip

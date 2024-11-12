@@ -14,7 +14,7 @@ class TopicConfigs:
     def __init__(self):
         self.device = 'cuda'
         self.batch_size = 32
-        self.learning_rate = 1e-4
+        self.learning_rate = 5e-4
         self.weight_decay = 1e-6
         self.clip = 0
         self.verbose = 1

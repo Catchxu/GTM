@@ -29,7 +29,7 @@ if __name__ == '__main__':
 
     # train topic_model
     model = TopicModel(vocabulary, args=args)
-    num_epochs = 0
+    num_epochs = 10
     for epoch in range(num_epochs):
         model.train_one_epoch(epoch, adata_common)
 
@@ -38,14 +38,13 @@ if __name__ == '__main__':
 
     # query topic proportions for each cell
     C2T = model.call_C2T(adata_common)
-    # adata_common.obsm['topic_proportion'] = C2T
-    
     num_topics = C2T.shape[1]
     topic_df = pd.DataFrame(C2T, columns=[f"Topic_{i+1}" for i in range(num_topics)])
     topic_df['cell_type'] = adata_common.obs['cell_type'].values
-    avg_topic_df = topic_df.groupby('cell_type').mean()
+    avg_topic_df = topic_df.groupby('cell_type', observed=False).mean()
     adata_topics = sc.AnnData(X=avg_topic_df.values)
     adata_topics.obs['cell_type'] = avg_topic_df.index
+
 
     # visualization
     import matplotlib.pyplot as plt
@@ -56,9 +55,23 @@ if __name__ == '__main__':
         groupby='cell_type',
         cmap='RdBu_r',
         standard_scale='var',
-        swap_axes=True,
-        figsize=(15, 5),
         show=False)
 
     plt.savefig('./results/PBMC_C2T_heatmap.png', 
+                dpi=300, bbox_inches='tight')
+
+    # query topic distributions for each gene
+    G2T = model.call_G2T(model.vocabulary)
+    num_topics = G2T.shape[1]
+    topic_df = pd.DataFrame(G2T, columns=[f"Topic_{i+1}" for i in range(num_topics)])
+    adata_topics = sc.AnnData(topic_df)
+
+    sc.pl.heatmap(
+        adata_topics,
+        var_names=adata_topics.var_names,
+        cmap='RdBu_r',
+        standard_scale='var',
+        show=False)
+
+    plt.savefig('./results/PBMC_G2T_heatmap.png', 
                 dpi=300, bbox_inches='tight')
