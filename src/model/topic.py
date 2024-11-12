@@ -205,7 +205,7 @@ class TopicModel(nn.Module):
             theta, _ = self.call_theta(batch)
             cells_topics.append(theta)
         
-        return torch.stack(cells_topics).detach().cpu().numpy()
+        return torch.cat(cells_topics).detach().cpu().numpy()
 
 
     @torch.no_grad()

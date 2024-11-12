@@ -1,3 +1,6 @@
+import os
+os.environ['CUDA_VISIBLE_DEVICES'] = '1'
+
 import pickle
 import torch
 import pandas as pd
@@ -39,14 +42,23 @@ if __name__ == '__main__':
     
     num_topics = C2T.shape[1]
     topic_df = pd.DataFrame(C2T, columns=[f"Topic_{i+1}" for i in range(num_topics)])
-    adata_topics = sc.AnnData(X=topic_df.values)
-    adata_topics.obs = adata_common.obs.copy()
+    topic_df['cell_type'] = adata_common.obs['cell_type'].values
+    avg_topic_df = topic_df.groupby('cell_type').mean()
+    adata_topics = sc.AnnData(X=avg_topic_df.values)
+    adata_topics.obs['cell_type'] = avg_topic_df.index
+
+    # visualization
+    import matplotlib.pyplot as plt
 
     sc.pl.heatmap(
         adata_topics,
         var_names=adata_topics.var_names,
         groupby='cell_type',
-        cmap='RdBu',
+        cmap='RdBu_r',
         standard_scale='var',
-        save='./result/PBMC_C2T_heatmap.png'
-    )
+        swap_axes=True,
+        figsize=(15, 5),
+        show=False)
+
+    plt.savefig('./results/PBMC_C2T_heatmap.png', 
+                dpi=300, bbox_inches='tight')

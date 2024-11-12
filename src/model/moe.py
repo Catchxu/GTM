@@ -83,7 +83,6 @@ class Expert(nn.Module):
 
 class MixtureOfExperts(nn.Module):
     def __init__(self, gene_dim, args: TopicConfigs):
-                 # num_experts, topk=2, noisy_gating=True):
         super().__init__()
     
         self.gene_dim = gene_dim
@@ -97,8 +96,12 @@ class MixtureOfExperts(nn.Module):
         self.experts = nn.ModuleList([
             Expert(self.gene_dim, self.bias, self.norm) for _ in range(self.num_experts)
         ])
-        self.w_gate = nn.Parameter(torch.zeros(gene_dim, num_experts), requires_grad=True)
-        self.w_noise = nn.Parameter(torch.zeros(gene_dim, num_experts), requires_grad=True)
+
+        w_gate = torch.zeros(self.gene_dim, self.num_experts)
+        self.w_gate = nn.Parameter(w_gate, requires_grad=True)
+
+        w_noise = torch.zeros(self.gene_dim, self.num_experts)
+        self.w_noise = nn.Parameter(w_noise, requires_grad=True)
 
         self.softplus = nn.Softplus()
         self.softmax = nn.Softmax(1)

@@ -165,3 +165,4 @@ cython_debug/
 
 data/
 save_model/
+results/
